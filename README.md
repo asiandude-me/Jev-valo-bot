@@ -48,6 +48,12 @@ them before acting (a Smith predictor). With that, the same 0.9 gain settles in 
 frames with no overshoot at all. This matters far more than gain tuning, which is why
 `aim.compensation_frames` is the second thing to set after calibration.
 
+The same problem has a second half. If the loop runs faster than the display refreshes
+— 600 fps against a 100 Hz screen is normal here — it sees each rendered frame many
+times and issues a full correction for each one. `capture.skip_duplicate_frames` holds
+the loop to the rate that actually carries new information. Against the simulator this
+was the difference between 2 hits and 31 hits in 30 seconds.
+
 ### Two detector backends
 
 | backend | latency | when to use |
@@ -130,13 +136,35 @@ sensitivity profile, `0.022 * sens` for a Source-style one. Verify them anyway.
 See `configs/aimlabs_gridshot.yaml` — every field is commented. Sections: `capture`,
 `detector`, `tracking`, `aim`, `trigger`, `guard`, `hotkeys`.
 
+## Testing it without Windows
+
+`tools/simulate_aimlabs.py` is a virtual gridshot trainer: it renders targets to an X
+display, reads the mouse the way a game does (relative motion, pointer re-centred
+every frame), rotates the view accordingly, and scores clicks. The bot's real capture
+backend grabs actual screen pixels and its real mouse backend sends actual input, so
+the whole loop is exercised end to end.
+
+```bash
+Xvfb :99 -screen 0 1920x1080x24 &
+export DISPLAY=:99
+python tools/simulate_aimlabs.py --seconds 30 --report score.json &
+python -m aimtrainer run --config configs/simulator.yaml
+```
+
+Measured against it on a CPU-only container: the calibrator recovered the simulator's
+ground-truth `deg_per_count` of 0.0245 as **0.024547** (0.19% error, 0.3% spread over
+7 trials), and a 30-second gridshot run scored **31 hits from 34 shots (91%)** at
+1.03 hits/sec, with a mean hit offset of 6.9 px on 20 px targets.
+
+`--mode static` gives the single motionless target the calibrator needs.
+
 ## Tests
 
 ```bash
 python -m pytest -q
 ```
 
-171 tests, no display or Windows API needed. They cover the projection maths, the
+177 tests, no display or Windows API needed. They cover the projection maths, the
 colour detector against synthetic frames, track association and velocity estimation,
 dead-time compensation (including what happens when you mis-configure it), sub-pixel
 accumulation, the guard's block list, and the full loop end to end. The calibrator is
@@ -157,6 +185,7 @@ src/aimtrainer/
   control.py       target selection, PD + dead-time compensation, trigger logic
   mouse.py         SendInput / pynput / dry-run
   guard.py         foreground-window gate and block list
-  runner.py        the loop, hotkeys, latency stats
+  runner.py        the loop, duplicate-frame skipping, hotkeys, latency stats
 tools/export_yolo_onnx.py   ultralytics -> onnx
+tools/simulate_aimlabs.py   virtual gridshot trainer on an X display
 ```

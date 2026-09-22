@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 import time
 
+import numpy as np
+
 from . import guard
 from .capture import Capture, Region, build_capture, centered_region
 from .config import Config
@@ -44,6 +46,9 @@ class Runner:
         self.stats = LoopStats("capture", "detect", "track", "control", "total")
         self.enabled = False
         self.running = True
+        self._last_signature: np.ndarray | None = None
+        self._acted_last_frame = False
+        self.duplicates_skipped = 0
         self._hotkeys = HotkeyWatcher({"toggle": cfg.hotkeys.toggle, "quit": cfg.hotkeys.quit})
         self._last_guard_check = 0.0
         self._guard_ok = False
@@ -57,6 +62,22 @@ class Runner:
         t1 = time.perf_counter()
         if frame is None:
             # dxcam says "nothing changed"; no new information, so don't re-detect.
+            return
+        # Evaluated unconditionally, so the stored signature always describes the
+        # most recent frame; short-circuiting would leave it stale.
+        repeated = self._is_duplicate(frame)
+        if repeated and self._acted_last_frame:
+            # Same idea for mss, which has no such signal of its own. Acting twice on
+            # one rendered frame is how the loop over-corrects: it issues a second
+            # full correction for an error the first one already fixed but that is
+            # not visible yet. Skipping holds the loop at the display's rate, which
+            # is the only rate carrying new information.
+            #
+            # Gated on having actually moved, because otherwise this deadlocks: a
+            # tick that commands nothing leaves the screen unchanged, so every later
+            # frame is a duplicate and the bot freezes with the crosshair off target.
+            # If we did not move, the frame is worth re-reading however stale it is.
+            self.duplicates_skipped += 1
             return
         self.stats.add("capture", (t1 - t0) * 1000.0)
 
@@ -72,15 +93,34 @@ class Runner:
         t4 = time.perf_counter()
         self.stats.add("control", (t4 - t3) * 1000.0)
 
+        acted = False
         if self.enabled and self._input_permitted(now):
             if command.dx_counts or command.dy_counts:
                 self.mouse.move_relative(command.dx_counts, command.dy_counts)
+                acted = True
             if command.should_fire:
                 self.mouse.click()
+                acted = True
+        self._acted_last_frame = acted
 
         self.stats.add("total", (time.perf_counter() - t0) * 1000.0)
         self.stats.frames += 1
         self.stats.detections += len(detections)
+
+    def _is_duplicate(self, frame: np.ndarray) -> bool:
+        """Cheap identity test on a strided sample of the frame.
+
+        Every 4th pixel is plenty: any target movement large enough to be worth a
+        correction changes many of them. Comparing ~19 KB costs microseconds, far
+        less than the detection pass it saves.
+        """
+        if not self.cfg.capture.skip_duplicate_frames:
+            return False
+        signature = frame[::4, ::4]
+        if self._last_signature is not None and np.array_equal(signature, self._last_signature):
+            return True
+        self._last_signature = signature.copy()
+        return False
 
     def _input_permitted(self, now: float) -> bool:
         """Re-check the foreground window ~10x/second rather than every frame.

@@ -1,0 +1,50 @@
+# For tools/simulate_aimlabs.py on a virtual X display. Development and CI only --
+# this is how you exercise the real capture and input path without Windows.
+#
+#   Xvfb :99 -screen 0 1920x1080x24 &
+#   DISPLAY=:99 python tools/simulate_aimlabs.py --seconds 20 &
+#   DISPLAY=:99 python -m aimtrainer run --config configs/simulator.yaml
+
+capture:
+  backend: mss           # dxcam is Windows-only
+  roi_width: 320
+  roi_height: 320
+  screen_width: 1920
+  screen_height: 1080
+
+detector:
+  backend: color
+  hsv_ranges:
+    - h_min: 140
+      h_max: 170
+      s_min: 120
+      v_min: 120
+  min_area_px: 40
+
+tracking:
+  max_assign_px: 90.0
+
+aim:
+  hfov_deg: 103.0
+  deg_per_count: 0.024547 # measured by `aimtrainer calibrate` against the simulator
+  kp: 0.55
+  kd: 0.08
+  compensation_frames: 2
+  lead_ms: 6.0
+  settle_px: 2.0
+
+trigger:
+  enabled: true          # the simulator scores clicks, so let it shoot
+  deadzone_px: 5.0
+  min_lock_frames: 2
+  cooldown_ms: 90.0
+
+guard:
+  # The foreground-window check is Windows-only and fails closed everywhere else,
+  # which would mean no input at all here. Turning it off is safe for the simulator
+  # and does NOT reach the block list: live competitive games stay blocked in code.
+  require_foreground_match: false
+
+hotkeys:
+  toggle: F1
+  quit: F2

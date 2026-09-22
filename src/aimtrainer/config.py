@@ -19,6 +19,7 @@ class CaptureConfig:
     roi_width: int = 320           # ROI side, centred on the crosshair
     roi_height: int = 320
     target_fps: int = 240          # dxcam capture rate ceiling
+    skip_duplicate_frames: bool = True  # don't act twice on one rendered frame
     screen_width: int = 1920       # full display, for the projection model
     screen_height: int = 1080
 

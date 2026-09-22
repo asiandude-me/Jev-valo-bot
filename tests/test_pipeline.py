@@ -185,3 +185,88 @@ def test_samples_are_bounded_so_a_long_run_does_not_grow_memory():
     for v in range(5000):
         stage.add(float(v))
     assert len(stage.samples) == 600
+
+
+# --- duplicate-frame skipping ------------------------------------------------------
+
+def test_a_repeated_frame_is_not_acted_on_twice():
+    """Running faster than the display must not mean correcting faster than it."""
+    frame = render_frame(320, 320, [SyntheticTarget(250.0, 90.0, 18.0)], crosshair=False)
+    runner, mouse = runner_over([frame] * 10)
+    runner.capture = FrameSequenceCapture([frame], Region(0, 0, 320, 320))  # always identical
+    for _ in range(10):
+        runner.tick()
+    assert len(mouse.moves) == 1           # one correction for one rendered frame
+    assert runner.duplicates_skipped > 0
+
+
+def test_a_changed_frame_is_always_processed():
+    frames, _ = orbiting_sequence(320, 320, 12)
+    runner, _ = runner_over(frames)
+    for _ in frames:
+        runner.tick()
+    assert runner.stats.frames == len(frames)
+    assert runner.duplicates_skipped == 0
+
+
+def test_skipping_never_freezes_the_loop_on_a_static_screen():
+    """Regression: a tick that commands nothing leaves the screen unchanged, so every
+    later frame is a duplicate. Skipping those would strand the crosshair forever."""
+    cfg = cfg_for()
+    cfg.aim.kp = 0.5
+    region = Region(0, 0, 320, 320)
+    mouse = DryRunMouse()
+    runner = Runner(cfg, capture=FrameSequenceCapture([render_frame(320, 320, [], crosshair=False)], region), mouse=mouse)
+    runner.enabled = True
+    runner._guard_ok = True
+    runner._last_guard_check = 1e18
+
+    from aimtrainer.runner import view_model
+
+    vm = view_model(cfg)
+    pos = [270.0, 70.0]
+    for i in range(80):
+        frame = render_frame(320, 320, [SyntheticTarget(pos[0], pos[1], 18.0)], crosshair=False)
+        runner.capture = FrameSequenceCapture([frame], region)
+        before = len(mouse.moves)
+        runner.tick(now=i / 240.0)
+        if len(mouse.moves) > before:
+            dx_px, dy_px = vm.counts_to_pixel_error(*mouse.moves[-1])
+            pos[0] -= dx_px
+            pos[1] -= dy_px
+
+    assert math.hypot(pos[0] - 160.0, pos[1] - 160.0) < 6.0
+
+
+def test_skipping_is_disabled_while_the_bot_is_not_acting():
+    """A disabled or preview run must keep observing, not stall on a static screen."""
+    frame = render_frame(320, 320, [SyntheticTarget(250.0, 90.0, 18.0)], crosshair=False)
+    runner, _ = runner_over([frame])
+    runner.capture = FrameSequenceCapture([frame], Region(0, 0, 320, 320))
+    runner.enabled = False
+    for _ in range(8):
+        runner.tick()
+    assert runner.stats.frames == 8
+    assert runner.duplicates_skipped == 0
+
+
+def test_skipping_can_be_turned_off_in_config():
+    frame = render_frame(320, 320, [SyntheticTarget(250.0, 90.0, 18.0)], crosshair=False)
+    cfg = cfg_for()
+    cfg.capture.skip_duplicate_frames = False
+    runner, mouse = runner_over([frame], cfg)
+    runner.capture = FrameSequenceCapture([frame], Region(0, 0, 320, 320))
+    for _ in range(6):
+        runner.tick()
+    assert runner.duplicates_skipped == 0
+    assert len(mouse.moves) > 1
+
+
+def test_the_duplicate_check_notices_a_small_target_movement():
+    """The strided signature must not be so coarse that real motion reads as static."""
+    runner, _ = runner_over([render_frame(320, 320, [], crosshair=False)])
+    a = render_frame(320, 320, [SyntheticTarget(200.0, 160.0, 18.0)], crosshair=False)
+    b = render_frame(320, 320, [SyntheticTarget(202.0, 160.0, 18.0)], crosshair=False)
+    assert runner._is_duplicate(a) is False
+    assert runner._is_duplicate(b) is False   # 2px of motion is still a new frame
+    assert runner._is_duplicate(b) is True    # but the same frame twice is not
