@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aimtrainer-bot"
+version = "0.1.0"
+description = "Real-time computer-vision agent for aim trainers (Aim Labs)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.23",
+    "opencv-python>=4.8",
+    "mss>=9.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+windows = ["dxcam>=0.0.5"]
+onnx = ["onnxruntime>=1.16"]
+pynput = ["pynput>=1.7"]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+aimtrainer = "aimtrainer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

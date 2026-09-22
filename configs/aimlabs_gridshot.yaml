@@ -1,0 +1,90 @@
+# Aim Labs, gridshot-style tasks. Every value is documented; the two you must set for
+# your own machine are capture.screen_* and aim.deg_per_count.
+
+capture:
+  backend: auto          # auto | dxcam | mss. auto prefers dxcam and falls back to mss.
+  monitor: 1
+  roi_width: 320         # ROI around the crosshair. Smaller = lower latency, less reach.
+  roi_height: 320
+  target_fps: 240        # dxcam capture ceiling; match or exceed your monitor
+  screen_width: 1920     # your actual display, used by the projection model
+  screen_height: 1080
+
+detector:
+  backend: color         # color | onnx
+
+  # --- color backend -------------------------------------------------------------
+  # Set your Aim Labs target colour to something saturated and unlike the arena, then
+  # run `aimtrainer preview` and widen/narrow these until the mask panel is clean.
+  # OpenCV hue is 0-179. For red, wrap around: h_min: 170, h_max: 10.
+  hsv_ranges:
+    - h_min: 140         # bright magenta / pink
+      h_max: 170
+      s_min: 120
+      s_max: 255
+      v_min: 120
+      v_max: 255
+  min_area_px: 40        # below this it is a particle or an anti-aliased edge
+  max_area_px: 40000
+  min_extent: 0.45       # blob area / box area; a filled disc is ~0.785
+  max_aspect: 2.5        # reject long thin shapes (UI lines, tracers)
+  open_kernel: 3         # removes speckle
+  close_kernel: 5        # fills the crosshair hole punched in a target
+
+  # --- onnx backend --------------------------------------------------------------
+  model_path: models/targets.onnx
+  layout: auto           # auto | v8 (4+nc channels) | v5 (5+nc, with objectness).
+                         # auto guesses; set it explicitly if scores come out wrong.
+  input_size: 320        # must match the export
+  conf_threshold: 0.45
+  nms_threshold: 0.50
+  providers:             # first available wins
+    - TensorrtExecutionProvider
+    - CUDAExecutionProvider
+    - DmlExecutionProvider
+    - CPUExecutionProvider
+  class_ids: []          # empty = every class
+
+tracking:
+  max_assign_px: 90.0    # association gate. Too large and two targets swap identities.
+  max_missed_frames: 3   # survive brief occlusion without losing velocity
+  velocity_alpha: 0.45   # EMA on velocity. Lower = smoother but laggier lead.
+  min_hits_for_velocity: 2
+
+aim:
+  hfov_deg: 103.0        # Aim Labs default horizontal FOV
+  deg_per_count: 0.0245  # <<< MEASURE THIS: `aimtrainer calibrate`
+  kp: 0.50               # fraction of remaining error closed per tick
+  kd: 0.08               # mops up target acceleration; small, and raising it amplifies
+                         # detection jitter. Most stability comes from the line below.
+  compensation_frames: 2 # frames of your own motion not yet visible in the captured
+                         # frame -- roughly (end-to-end latency / frame interval), from
+                         # `bench --live`. This is what keeps a high kp from ringing.
+                         # Round DOWN if unsure: guessing low degrades gently,
+                         # guessing high makes the loop ring and stall short.
+  max_counts_per_tick: 220.0
+  lead_ms: 8.0           # aim ahead along velocity; set near `bench --live` total p95
+  max_target_distance_px: 400.0
+  stickiness: 1.35       # keep the current target unless a rival is 35% better
+  settle_px: 2.0         # stop correcting inside this radius
+
+trigger:
+  enabled: false         # aim assist only by default
+  deadzone_px: 6.0
+  min_lock_frames: 2
+  cooldown_ms: 90.0
+
+guard:
+  # Substrings matched against the foreground window title and process name.
+  # Live competitive games are blocked unconditionally in code and cannot be
+  # re-enabled from here.
+  allow_window_substrings:
+    - aimlab
+    - aim lab
+    - kovaak
+    - fpsaimtrainer
+  require_foreground_match: true
+
+hotkeys:
+  toggle: F1
+  quit: F2
